@@ -8,26 +8,25 @@ local players, parent =  torch.class('nn.Players', 'nn.Module')
 
 
 function players:__init(opt)
-	parent.__init(self)
+    parent.__init(self)
 
-	-- params
-	self.batch_size = opt.batch_size
-	self.vocab_size = opt.vocab_size
+    -- params
+    self.batch_size = opt.batch_size
+    self.vocab_size = opt.vocab_size
 
-	--defining the two players
-	self.player1 = player1.model() 
-	self.player2 = player2.model()
+    --defining the two players
+    self.player1 = player1.model() 
+    self.player2 = player2.model()
 	
-	if opt.gpuid == 0 then
-		-- categorical for selection of action on object
-		self.object_action = nn.ReinforceCategorical(true):cuda()
-		-- baseline 
-	        self.baseline = nn.Sequential():add(nn.Constant(1,1)):add(nn.Add(1)):cuda()
-	else
-                self.object_action = nn.ReinforceCategorical(true)
-                self.baseline = nn.Sequential():add(nn.Constant(1,1)):add(nn.Add(1))
-
-	end
+    if opt.gpuid == 0 then
+        -- categorical for selection of action on object
+        self.object_action = nn.ReinforceCategorical(true):cuda()
+	-- baseline 
+	self.baseline = nn.Sequential():add(nn.Constant(1,1)):add(nn.Add(1)):cuda()
+    else
+        self.object_action = nn.ReinforceCategorical(true)
+        self.baseline = nn.Sequential():add(nn.Constant(1,1)):add(nn.Add(1))
+    end
 
 
 end
@@ -35,26 +34,30 @@ end
 --called from game:forward()
 function players:updateOutput(input)
 
-	-- input: 	
+    -- input: 	
+    local startWorld = input[1]
+    local endWorld = input[2]
 	
-	--player 1 receives start world and end words
-	-- does a forward and gives back distribution over objects to move
-	self.probs_object = self.player1:forward()
+    --player 1 receives start world and end words
+    -- does a forward and gives back distribution over objects to move
+    self.probs_object = self.player1:forward({startWorld, endWorld})
 
-	--sample the object
-	self.object = self.object_selection:forward(self.probs_object)
+    --sample the object
+    self.object = self.object_selection:forward(self.probs_object)
 
 
-	-- player 2 receives the start world and the object to get moved
-	self.prediction = self.player2:forward()
+    -- player 2 receives the start world and the object to get moved
+    self.prediction = self.player2:forward({startWorld, self.object})
 
 	
-	-- baseline
-	local baseline = self.baseline:forward(torch.CudaTensor(self.batch_size,1))
+    -- baseline
+    local baseline = self.baseline:forward(torch.CudaTensor(self.batch_size,1))
 
-	local outputs = {}
+    --return action
+    local outputs = {}
+    table.insert(outputs, prediction)
 
-	return outputs
+    return outputs
 end
 
 

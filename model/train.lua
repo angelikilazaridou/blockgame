@@ -64,9 +64,9 @@ torch.setdefaulttensortype('torch.FloatTensor') -- for CPU
 
 if opt.gpuid >= 0 then
   require 'cutorch' 
-  	require 'cunn'
-  	cutorch.manualSeed(opt.seed)
-  	cutorch.setDevice(opt.gpuid + 1) -- note +1 because lua is 1-indexed
+    require 'cunn'
+    cutorch.manualSeed(opt.seed)
+    cutorch.setDevice(opt.gpuid + 1) -- note +1 because lua is 1-indexed
 end
 
 
@@ -83,21 +83,20 @@ print(opt)
 -------------------------------------------------------------------------------
 -- Initialize the network
 -------------------------------------------------------------------------------
---[[local protos = {}
+local protos = {}
 
-print(string.format('Parameters are vocab_object=%d\n', vocab_object))
 protos.players = nn.Players(opt)
 
 if opt.crit == 'reward_discr' then
   protos.criterion = nn.VRClassReward(protos.players,opt.rewardScale)
 else
-	print(string.format('Wrog criterion: %s\n',opt.crit))
+    print(string.format('Wrog criterion: %s\n',opt.crit))
 end
 
 -- ship criterion to GPU, model is shipped dome inside model
 if opt.gpuid >= 0 then
-	--model is shipped to cpu within the model
-	protos.criterion:cuda()
+    --model is shipped to cpu within the model
+    protos.criterion:cuda()
 end
 
 
@@ -108,7 +107,6 @@ print('total number of parameters in Game: ', params:nElement())
 assert(params:nElement() == grad_params:nElement())
 
 collectgarbage() 
---]]
 -------------------------------------------------------------------------------
 -- Validation evaluation
 -------------------------------------------------------------------------------
@@ -118,20 +116,20 @@ local function eval_split(split, evalopt)
 
   protos.players:evaluate() 
   loader:resetIterator(split) -- rewind iteator back to first datapoint in the split
-  	
+    
   local n = 0
   local loss_sum = 0
   local loss_evals = 0
   local acc = 0
-	while true do
+    while true do
 
-  	-- get batch of data  
+    -- get batch of data  
     local data = loader:getBatch{batch_size = opt.batch_size, split = 'train'}
 
 
     
     --forward model
-    local outputs = protos.players:forward(data)
+    local outputs = protos.players:forward(data.startWorld, data.endWorld)
    
     --[[
     local nodes = protos.players.player1:listModules()[1]['forwardnodes']
@@ -143,11 +141,7 @@ local function eval_split(split, evalopt)
     end--]]
  
     --prepage gold data
-    local gold
-    if opt.crit == 'reward_discr' then
-      --gold = data.single_discriminative
-      gold = data.referent_position
-    end
+    local gold =  data.objects
     
     --forward loss
     local loss = protos.criterion:forward(outputs, gold)
@@ -166,12 +160,12 @@ local function eval_split(split, evalopt)
     loss_evals = loss_evals + 1
     
     n = n+opt.batch_size
-	
+    
     -- if we wrapped around the split or used up val imgs budget then bail
     local ix0 = data.bounds.it_pos_now
     local ix1 = math.min(data.bounds.it_max, val_images_use)
     if verbose then
-    	print(string.format('evaluating validation performance... %d/%d (%f)', ix0-1, ix1, loss))
+        print(string.format('evaluating validation performance... %d/%d (%f)', ix0-1, ix1, loss))
     end
 
     if loss_evals % 10 == 0 then collectgarbage() end
@@ -179,7 +173,7 @@ local function eval_split(split, evalopt)
     if n >= val_images_use then break end -- we've used enough images
   end
 
-	return loss_sum/loss_evals, acc/(loss_evals*opt.batch_size)
+  return loss_sum/loss_evals, acc/(loss_evals*opt.batch_size)
 
 end
 
@@ -199,46 +193,34 @@ local function lossFun()
     local data = loader:getBatch{batch_size = opt.batch_size, split = 'train'}
   
   
-	print(data)
-	local inputs = {}
-	--compile input to players
-	for i=1,#data.images do
-		table.insert(inputs,data.images[i])
-	end
-	--insert the shuffled refs for P2 
-	for i=1,#data.refs do
-        	table.insert(inputs, data.refs[i])
-    	end
-	--insert temperature
-	table.insert(inputs,opt.temperature)
-	--forward model
-	local outputs = protos.players:forward(inputs)
-  	
-	--compile gold data
-	local gold
-	if opt.crit == 'reward_discr' then
-		--gold = data.single_discriminative
-		gold = data.referent_position
-	end
+    local inputs = {}
+    table.insert(inputs, data.startWorld)
+    table.insert(inputs, data.endWorld)
 
-	--forward in criterion to get loss
-  local loss = protos.criterion:forward(outputs, gold)
+    --forward model
+    local outputs = protos.players:forward(inputs)
+    
+    --compile gold data
+    local gold =  data.objects
 
-	--print(torch.sum(gold,2))
-	-----------------------------------------------------------------------------
-  -- Backward pass
-  -----------------------------------------------------------------------------
-  -- backprop through criterion
-  local dpredicted = protos.criterion:backward(outputs, gold)
+    --forward in criterion to get loss
+    local loss = protos.criterion:forward(outputs, gold)
 
-  -- backprop through model
-  local dummy = protos.players:backward(inputs, {dpredicted})
+    ----------------------------------------------------------------------------
+    -- Backward pass
+    -----------------------------------------------------------------------------
+  
+    -- backprop through criterion
+    local dpredicted = protos.criterion:backward(outputs, gold)
 
-  -- clip gradients
-  grad_params:clamp(-opt.grad_clip, opt.grad_clip)
+    -- backprop through model
+    local dummy = protos.players:backward(inputs, {dpredicted})
 
+    -- clip gradients
+    grad_params:clamp(-opt.grad_clip, opt.grad_clip)
 
-	return loss
+    return loss
+
 end
 
 -------------------------------------------------------------------------------
@@ -256,90 +238,90 @@ local checkpoint_path = opt.checkpoint_path .. 'cp_id' .. opt.id ..'.cp'
 
 while true do  
 
- 	-- eval loss/gradient
- 	local losses = lossFun()
+    -- eval loss/gradient
+    local losses = lossFun()
 
-	local loss = 0
-	local acc = 0
+    local loss = 0
+    local acc = 0
 
-	if iter % opt.print_every == 0 then
-		--evaluate val performance 
-		loss,acc = eval_split('val', {val_images_use = opt.val_images_use, verbose=opt.verbose})
-		val_acc_history[iter] = acc
-		loss_history[iter] = losses
-	end
+    if iter % opt.print_every == 0 then
+        --evaluate val performance 
+        loss,acc = eval_split('val', {val_images_use = opt.val_images_use, verbose=opt.verbose})
+        val_acc_history[iter] = acc
+        loss_history[iter] = losses
+    end
 
- 	-- save checkpoint once in a while (or on final iteration)
- 	if (iter % opt.save_checkpoint_every == 0 or iter == opt.max_iters) then
+    -- save checkpoint once in a while (or on final iteration)
+    if (iter % opt.save_checkpoint_every == 0 or iter == opt.max_iters) then
 
 
-    	-- write a (thin) json report
-    	local checkpoint = {}
-    	checkpoint.opt = opt
-    	checkpoint.iter = iter
-    	checkpoint.loss_history = loss_history
-    	checkpoint.val_acc_history = val_acc_history
+        -- write a (thin) json report
+        local checkpoint = {}
+        checkpoint.opt = opt
+        checkpoint.iter = iter
+        checkpoint.loss_history = loss_history
+        checkpoint.val_acc_history = val_acc_history
 
-    	utils.write_json(checkpoint_path .. '.json', checkpoint)
-    	--print('wrote json checkpoint to ' .. checkpoint_path .. '.json')
+        utils.write_json(checkpoint_path .. '.json', checkpoint)
+        --print('wrote json checkpoint to ' .. checkpoint_path .. '.json')
 
-    	-- write the full model checkpoint as well if we did better than ever
-    	local current_score = loss
+        -- write the full model checkpoint as well if we did better than ever
+        local current_score = loss
     
-      		if iter > 0 then -- dont save on very first iteration
- 			  -- include the protos (which have weights) and save to file
- 			  local save_protos = {}
- 			  save_protos.model = protos.players -- these are shared clones, and point to correct param storage
- 			  checkpoint.protos = save_protos
- 			  -- also include the vocabulary mapping so that we can use the checkpoint 
- 			  -- alone to run on arbitrary images without the data loader
- 			  torch.save(checkpoint_path .. '.t7', checkpoint)
- 			  --print('wrote checkpoint to ' .. checkpoint_path .. '.t7')
-		end
-      end
-  -- decay the learning rate
-  local learning_rate = opt.learning_rate
-  if iter > opt.learning_rate_decay_start and opt.learning_rate_decay_start >= 0 then
-    local frac = (iter - opt.learning_rate_decay_start) / opt.learning_rate_decay_every
-    local decay_factor = math.pow(0.5, frac)
-    learning_rate = learning_rate * decay_factor -- set the decayed rate
-  end
+            if iter > 0 then -- dont save on very first iteration
+              -- include the protos (which have weights) and save to file
+              local save_protos = {}
+              save_protos.model = protos.players -- these are shared clones, and point to correct param storage
+              checkpoint.protos = save_protos
+              -- also include the vocabulary mapping so that we can use the checkpoint 
+              -- alone to run on arbitrary images without the data loader
+              torch.save(checkpoint_path .. '.t7', checkpoint)
+              --print('wrote checkpoint to ' .. checkpoint_path .. '.t7')
+        end
+    end
+    -- decay the learning rate
+    local learning_rate = opt.learning_rate
+    if iter > opt.learning_rate_decay_start and opt.learning_rate_decay_start >= 0 then
+        local frac = (iter - opt.learning_rate_decay_start) / opt.learning_rate_decay_every
+        local decay_factor = math.pow(0.5, frac)
+        learning_rate = learning_rate * decay_factor -- set the decayed rate
+    end
 
-  --anneal temperature
+  --[[--anneal temperature
   opt.temperature = math.max(0.000001,opt.decay_temperature * opt.temperature)
   opt.temperature2 = math.min(1,opt.anneal_temperature * opt.temperature2)
-
-	if iter % opt.print_every == 0 then
+  --]]
+    if iter % opt.print_every == 0 then
     --print(string.format("%d, grad norm = %6.4e, param norm = %6.4e, grad/param norm = %6.4e, lr = %6.4e", iter, grad_params:norm(), params:norm(), grad_params:norm() / params:norm(), learning_rate))
-      print(string.format("%d @ %f @ %f",iter, loss, acc))
-  end
-  -- perform a parameter update
-  if opt.optim == 'rmsprop' then
-    rmsprop(params, grad_params, learning_rate, opt.optim_alpha, opt.optim_epsilon, optim_state)
-  elseif opt.optim == 'adagrad' then
- 		adagrad(params, grad_params, learning_rate, opt.optim_epsilon, optim_state)
-	elseif opt.optim == 'sgd' then
- 		sgd(params, grad_params, opt.learning_rate)
- 	elseif opt.optim == 'sgdm' then
- 		sgdm(params, grad_params, learning_rate, opt.optim_alpha, optim_state)
-	elseif opt.optim == 'sgdmom' then
- 		sgdmom(params, grad_params, learning_rate, opt.optim_alpha, optim_state)
- 	elseif opt.optim == 'adam' then
- 		adam(params, grad_params, learning_rate, opt.optim_alpha, opt.optim_beta, opt.optim_epsilon, optim_state)
- 	else
- 		error('bad option opt.optim')
- 	end
+        print(string.format("%d @ %f @ %f",iter, loss, acc))
+    end
+    -- perform a parameter update
+    if opt.optim == 'rmsprop' then
+        rmsprop(params, grad_params, learning_rate, opt.optim_alpha, opt.optim_epsilon, optim_state)
+    elseif opt.optim == 'adagrad' then
+        adagrad(params, grad_params, learning_rate, opt.optim_epsilon, optim_state)
+    elseif opt.optim == 'sgd' then
+        sgd(params, grad_params, opt.learning_rate)
+    elseif opt.optim == 'sgdm' then
+        sgdm(params, grad_params, learning_rate, opt.optim_alpha, optim_state)
+    elseif opt.optim == 'sgdmom' then
+        sgdmom(params, grad_params, learning_rate, opt.optim_alpha, optim_state)
+    elseif opt.optim == 'adam' then
+        adam(params, grad_params, learning_rate, opt.optim_alpha, opt.optim_beta, opt.optim_epsilon, optim_state)
+    else
+        error('bad option opt.optim')
+    end
 
- 	-- stopping criterions
- 	iter = iter + 1
- 	if iter % 10 == 0 then collectgarbage() end -- good idea to do this once in a while, i think
- 	if loss0 == nil then loss0 = losses end
+    -- stopping criterions
+    iter = iter + 1
+    if iter % 10 == 0 then collectgarbage() end -- good idea to do this once in a while, i think
+    if loss0 == nil then loss0 = losses end
 
-  --if losses > loss0 * 20 then
-  --	print(string.format('loss seems to be exploding, quitting. %f vs %f', losses, loss0))
-  --  break
-  --end
+    --if losses > loss0 * 20 then
+    --    print(string.format('loss seems to be exploding, quitting. %f vs %f', losses, loss0))
+    --  break
+    --end
 
-  if opt.max_iters+1 > 0 and iter >= opt.max_iters+1 then break end -- stopping criterion
+    if opt.max_iters+1 > 0 and iter >= opt.max_iters+1 then break end -- stopping criterion
 
 end
