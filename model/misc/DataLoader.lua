@@ -60,6 +60,7 @@ function DataLoader:getBatch(opt)
     	local startWorld = torch.FloatTensor(batch_size, self.num_obj,  self.grid_size, self.grid_size):fill(0)
 	local endWorld = torch.FloatTensor(batch_size, self.num_obj,  self.grid_size, self.grid_size):fill(0)
 
+	-- label will hold the object that moves
 	local label_batch =  torch.FloatTensor(batch_size, 1)
 	
 	local max_index = #split_ix
@@ -93,6 +94,7 @@ function DataLoader:getBatch(opt)
 		y = d[3]
 		endWorld[i][o]:fill(0)
 		endWorld[i][o][x][y] = 1
+		label_batch[i] = o
 	end
 
 	if self.gpu<0 then
